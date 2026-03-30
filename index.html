@@ -1,50 +1,239 @@
-
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Biltmore Forest Golf Sim</title>
+  <style>
+    body { font-family: Arial; margin: 20px; }
+    canvas { border: 1px solid #000; margin: 10px 0; }
+    #controls { margin: 10px 0; }
+    button { padding: 10px; font-size: 16px; }
+    #info { font-weight: bold; }
+  </style>
+</head>
 <body>
-  <label>Club Speed (mph): <input type="range" id="speed" min="80" max="120" value="95"></label><span id="speedVal">95</span><br>
-  <label>Attack Angle (°): <input type="range" id="attack" min="-5" max="5" value="0" step="0.5"></label><span id="attackVal">0</span><br>
-  <label>Club Loft (°): <input type="range" id="loft" min="10" max="60" value="30"></label><span id="loftVal">30</span><br>
-  <button onclick="simulate()">Simulate Shot</button>
-  <p id="results"></p>
-  <canvas id="canvas" width="800" height="400" style="border:1px solid"></canvas>
+  <h1>Biltmore Forest CC Front 9 Golf Sim (Women's Gold Tees)</h1>
+  
+  <div id="info">
+    Hole: <span id="holeNum">1</span>/9 | Par: <span id="par">4</span> | Distance to Pin: <span id="distToPin">342</span>yd |
+    Lie: <span id="lieDist">342</span>yd | Strokes: <span id="strokes">0</span> | Total Score: <span id="score">0</span>
+  </div>
+  
+  <div id="controls">
+    <label>Club: <select id="club">
+      <option>Driver</option><option>3-Wood</option><option>5-Wood</option><option>3-Hybrid</option>
+      <option>4-Iron</option><option>5-Iron</option><option>6-Iron</option><option>7-Iron</option>
+      <option>8-Iron</option><option>9-Iron</option><option>PW</option><option>GW</option>
+      <option>SW</option><option>Putter</option>
+    </select></label> |
+    Speed (mph): <input type="range" id="speed" min="70" max="120" value="95"> <span id="speedVal">95</span> |
+    Attack (°): <input type="range" id="attack" min="-5" max="5" step="0.5" value="0"> <span id="attackVal">0</span><br>
+    <button onclick="hitShot()">Hit Shot</button>
+    <button onclick="nextHole()">Next Hole</button>
+    <button onclick="resetGame()">Reset Game</button>
+  </div>
+  
+  <div id="shotResults"></div>
+  
+  <canvas id="courseCanvas" width="1000" height="300"></canvas>
+  <canvas id="trajCanvas" width="800" height="200"></canvas>
 
 <script>
-let speedSlider = document.getElementById('speed');
-speedSlider.oninput = () => document.getElementById('speedVal').innerText = speedSlider.value;
-let attackSlider = document.getElementById('attack');
-attackSlider.oninput = () => document.getElementById('attackVal').innerText = attackSlider.value;
-let loftSlider = document.getElementById('loft');
-loftSlider.oninput = () => document.getElementById('loftVal').innerText = loftSlider.value;
+// Data from scorecard [page:1][code_file:1]
+const HOLES = [{"number":1,"par":4,"yards":342,"hcap":13},{"number":2,"par":4,"yards":417,"hcap":3},{"number":3,"par":3,"yards":157,"hcap":15},{"number":4,"par":4,"yards":456,"hcap":1},{"number":5,"par":4,"yards":398,"hcap":11},{"number":6,"par":4,"yards":384,"hcap":9},{"number":7,"par":5,"yards":524,"hcap":5},{"number":8,"par":4,"yards":423,"hcap":7},{"number":9,"par":3,"yards":162,"hcap":17}];
+const CLUBS = {"Driver":{"loft":11},"3-Wood":{"loft":15},"5-Wood":{"loft":18},"3-Hybrid":{"loft":20},"4-Iron":{"loft":23},"5-Iron":{"loft":27},"6-Iron":{"loft":30},"7-Iron":{"loft":34},"8-Iron":{"loft":38},"9-Iron":{"loft":42},"PW":{"loft":46},"GW":{"loft":50},"SW":{"loft":56},"Putter":{"loft":3}};
+const GREEN_RADIUS = 7.5; // yards
+const GREEN_START = 0; // Assume green at pin
 
-function simulate() {
-  let speed = parseFloat(speedSlider.value) * 0.447; // mph to m/s
-  let attack = parseFloat(attackSlider.value) * Math.PI/180;
-  let loft = parseFloat(loftSlider.value) * Math.PI/180;
-  let launch = loft + attack * 0.5; // Simplified dynamic loft
-  let g = 9.81;
-  let vx = speed * Math.cos(launch);
-  let vy = speed * Math.sin(launch);
-  let t_flight = 2 * vy / g;
-  let distance = vx * t_flight * 0.914; // meters to yards, no drag
-  let maxHeight = (vy**2) / (2*g) * 0.914; // yards
-  
-  document.getElementById('results').innerHTML = 
-    `Carry: ${distance.toFixed(0)} yards | Apex: ${maxHeight.toFixed(0)} yards | Flight Time: ${t_flight.toFixed(1)}s`;
-  
-  // Draw arc on canvas
-  let ctx = document.getElementById('canvas').getContext('2d');
-  ctx.clearRect(0,0,800,400);
-  let x=0, y=200, dt=0.01;
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  while (x < distance*10 && y > 0) { // Scaled
-    x += vx * dt * 10;
-    y -= vy * dt * 10 - 0.5 * g * dt*dt * 10;
-    ctx.lineTo(x, 400 - y);
-  }
-  ctx.stroke();
+// Game state
+let currentHole = 0;
+let strokes = 0;
+let totalScore = 0;
+let lieDist = 0; // yards to pin
+let holePar = 0;
+
+// Sliders
+document.getElementById('speed').oninput = () => document.getElementById('speedVal').textContent = document.getElementById('speed').value;
+document.getElementById('attack').oninput = () => document.getElementById('attackVal').textContent = document.getElementById('attack').value;
+
+function updateUI() {
+  const hole = HOLES[currentHole];
+  document.getElementById('holeNum').textContent = hole.number;
+  document.getElementById('par').textContent = hole.par;
+  document.getElementById('distToPin').textContent = HOLES[currentHole].yards;
+  document.getElementById('lieDist').textContent = Math.round(lieDist);
+  document.getElementById('strokes').textContent = strokes;
+  document.getElementById('score').textContent = totalScore;
 }
+
+function nextHole() {
+  if (lieDist <= GREEN_RADIUS) {
+    endHole();
+  }
+  currentHole = (currentHole + 1) % 9;
+  if (currentHole === 0) currentHole = 0; // Loop or stop
+  strokes = 0;
+  lieDist = HOLES[currentHole].yards;
+  updateUI();
+  drawCourse();
+}
+
+function resetGame() {
+  currentHole = 0;
+  strokes = 0;
+  totalScore = 0;
+  lieDist = HOLES[0].yards;
+  updateUI();
+  drawCourse();
+}
+
+function endHole() {
+  const putts = Math.random() < 0.5 ? 1 : 2;
+  strokes += putts;
+  totalScore += strokes;
+  document.getElementById('shotResults').innerHTML += `<p>Hole ${HOLES[currentHole].number} done! Putts: ${putts}, Score: ${strokes} (${strokes - HOLES[currentHole].par >= 0 ? '+' : ''}${strokes - HOLES[currentHole].par})</p>`;
+  updateUI();
+}
+
+function hitShot() {
+  const club = document.getElementById('club').value;
+  const speedMph = parseFloat(document.getElementById('speed').value);
+  const attackDeg = parseFloat(document.getElementById('attack').value);
+  
+  const loftDeg = CLUBS[club].loft;
+  const launchDeg = loftDeg + attackDeg * 0.5; // Dynamic loft approx [web:9]
+  const speedMs = speedMph * 0.44704; // mph to m/s
+  const launchRad = launchDeg * Math.PI / 180;
+  const attackRad = attackDeg * Math.PI / 180;
+  
+  const vx = speedMs * Math.cos(launchRad); // m/s
+  const vy0 = speedMs * Math.sin(launchRad);
+  const g = 9.81; // m/s^2
+  
+  // Simple drag coeff (air resistance)
+  const drag = 0.025;
+  const mass = 0.046; // kg
+  const area = 0.0014; // m^2 approx
+  const rho = 1.2; // air density
+  
+  // Flight sim step-by-step
+  let x = 0, y = 0, vx_now = vx, vy_now = vy0, t = 0, dt = 0.01;
+  let trajectory = [];
+  let apex = 0;
+  while (y >= 0) {
+    const dragForce = 0.5 * rho * area * drag * (vx_now**2 + vy_now**2);
+    const ax = -dragForce / mass * vx_now / Math.sqrt(vx_now**2 + vy_now**2);
+    const ay = -g - dragForce / mass * vy_now / Math.sqrt(vx_now**2 + vy_now**2);
+    
+    vx_now += ax * dt;
+    vy_now += ay * dt;
+    x += vx_now * dt;
+    y += vy_now * dt;
+    t += dt;
+    
+    trajectory.push({x: x * 1.0936, y: y * 1.0936}); // to yards
+    apex = Math.max(apex, y * 1.0936);
+    
+    if (t > 20) break; // safety
+  }
+  
+  let carryYards = x * 1.0936; // land yards
+  
+  // Bounce and roll [web:43]
+  const landSpeed = Math.sqrt(vx_now**2 + vy_now**2) * 1.0936 / 0.3048; // mph equiv
+  const bounceLoss = 0.6 + (loftDeg / 60) * 0.2; // higher loft softer
+  let roll = Math.max(2, landSpeed * 0.15 * (1 - loftDeg / 60)); // yards, wedges roll less
+  let totalDist = carryYards + roll;
+  
+  // Update lie
+  lieDist = Math.max(0, lieDist - totalDist);
+  strokes++;
+  
+  // Check green/overshoot
+  let status = '';
+  if (lieDist <= GREEN_RADIUS) {
+    status = '✅ ON GREEN! Hole complete.';
+    setTimeout(endHole, 500);
+  } else if (lieDist < 0) {
+    status = '❌ OVERSHOOT! +1 stroke penalty.';
+    lieDist = 0;
+    strokes++;
+    setTimeout(endHole, 500);
+  }
+  
+  // Results
+  document.getElementById('shotResults').innerHTML = `
+    <p><strong>Shot:</strong> ${club}, ${speedMph}mph, Attack ${attackDeg}°, Loft ${loftDeg}°<br>
+    Carry: ${carryYards.toFixed(0)}yd | Apex: ${apex.toFixed(0)}yd | Total: ${totalDist.toFixed(0)}yd | Time: ${t.toFixed(1)}s<br>
+    New lie: ${Math.round(lieDist)}yd ${status}</p>
+  `;
+  
+  // Draw trajectory
+  drawTrajectory(trajectory, apex);
+  // Draw course overview
+  drawCourse();
+  
+  updateUI();
+}
+
+function drawCourse() {
+  const canvas = document.getElementById('courseCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  const scale = canvas.width / (HOLES[currentHole].yards + 50);
+  const teeX = 0;
+  const pinX = HOLES[currentHole].yards * scale;
+  const lieX = (HOLES[currentHole].yards - lieDist) * scale;
+  const greenLeft = (HOLES[currentHole].yards - GREEN_RADIUS * 2) * scale;
+  
+  // Fairway
+  ctx.fillStyle = '#90EE90';
+  ctx.fillRect(0, 50, canvas.width, 200);
+  
+  // Green
+  ctx.fillStyle = '#228B22';
+  ctx.beginPath();
+  ctx.arc(pinX, 150, GREEN_RADIUS * 2 * scale * 0.6, 0, 2*Math.PI); // Oval-ish
+  ctx.fill();
+  
+  // Tee/Pin/Lie
+  ctx.fillStyle = '#FFF';
+  ctx.fillRect(teeX - 3, 140, 6, 20);
+  ctx.fillStyle = '#F00';
+  ctx.fillRect(pinX - 3, 140, 6, 20);
+  ctx.fillStyle = '#00F';
+  ctx.fillRect(lieX - 3, 140, 6, 20);
+  
+  ctx.fillStyle = '#000';
+  ctx.fillText('Tee', 10, 130);
+  ctx.fillText('Lie', lieX - 10, 130);
+  ctx.fillText('Pin', pinX + 5, 130);
+}
+
+function drawTrajectory(traj, apex) {
+  const canvas = document.getElementById('trajCanvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  ctx.strokeStyle = '#00F';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, canvas.height);
+  traj.forEach((pt, i) => {
+    ctx.lineTo(pt.x * 2, canvas.height - pt.y * 3); // Scaled
+  });
+  ctx.lineTo(traj[traj.length-1].x * 2, canvas.height);
+  ctx.stroke();
+  
+  ctx.fillStyle = '#F00';
+  ctx.fillText(`Apex: ${apex.toFixed(0)}yd`, 10, 20);
+}
+
+// Init
+updateUI();
+drawCourse();
 </script>
 </body>
 </html>
+
