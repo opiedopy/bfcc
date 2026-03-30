@@ -1,1 +1,50 @@
 
+<!DOCTYPE html>
+<html>
+<body>
+  <label>Club Speed (mph): <input type="range" id="speed" min="80" max="120" value="95"></label><span id="speedVal">95</span><br>
+  <label>Attack Angle (°): <input type="range" id="attack" min="-5" max="5" value="0" step="0.5"></label><span id="attackVal">0</span><br>
+  <label>Club Loft (°): <input type="range" id="loft" min="10" max="60" value="30"></label><span id="loftVal">30</span><br>
+  <button onclick="simulate()">Simulate Shot</button>
+  <p id="results"></p>
+  <canvas id="canvas" width="800" height="400" style="border:1px solid"></canvas>
+
+<script>
+let speedSlider = document.getElementById('speed');
+speedSlider.oninput = () => document.getElementById('speedVal').innerText = speedSlider.value;
+let attackSlider = document.getElementById('attack');
+attackSlider.oninput = () => document.getElementById('attackVal').innerText = attackSlider.value;
+let loftSlider = document.getElementById('loft');
+loftSlider.oninput = () => document.getElementById('loftVal').innerText = loftSlider.value;
+
+function simulate() {
+  let speed = parseFloat(speedSlider.value) * 0.447; // mph to m/s
+  let attack = parseFloat(attackSlider.value) * Math.PI/180;
+  let loft = parseFloat(loftSlider.value) * Math.PI/180;
+  let launch = loft + attack * 0.5; // Simplified dynamic loft
+  let g = 9.81;
+  let vx = speed * Math.cos(launch);
+  let vy = speed * Math.sin(launch);
+  let t_flight = 2 * vy / g;
+  let distance = vx * t_flight * 0.914; // meters to yards, no drag
+  let maxHeight = (vy**2) / (2*g) * 0.914; // yards
+  
+  document.getElementById('results').innerHTML = 
+    `Carry: ${distance.toFixed(0)} yards | Apex: ${maxHeight.toFixed(0)} yards | Flight Time: ${t_flight.toFixed(1)}s`;
+  
+  // Draw arc on canvas
+  let ctx = document.getElementById('canvas').getContext('2d');
+  ctx.clearRect(0,0,800,400);
+  let x=0, y=200, dt=0.01;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  while (x < distance*10 && y > 0) { // Scaled
+    x += vx * dt * 10;
+    y -= vy * dt * 10 - 0.5 * g * dt*dt * 10;
+    ctx.lineTo(x, 400 - y);
+  }
+  ctx.stroke();
+}
+</script>
+</body>
+</html>
